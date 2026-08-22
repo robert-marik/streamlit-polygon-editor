@@ -129,7 +129,7 @@ streamlit-polygon-editor/
 
 1. **Clone Repository:**
 ```bash
-git clone [https://github.com/robert-marik/streamlit-polygon-editor.git](https://github.com/robert-marik/streamlit-polygon-editor.git)
+pip install git+https://github.com/robert-marik/streamlit-polygon-editor.git
 cd streamlit-polygon-editor
 
 ```
@@ -140,15 +140,13 @@ cd streamlit-polygon-editor
 pip install -e .
 
 ```
+Changes made to Python or HTML files will automatically reflect in your test app without reinstallation.
 
-
-*Changes made to Python or HTML files will automatically reflect in your test app without reinstallation.*
 3. **Run Demo App:**
 ```bash
 streamlit run streamlit_polygon_editor/__init__.py
 
 ```
-
 
 
 ### Building & Distribution
