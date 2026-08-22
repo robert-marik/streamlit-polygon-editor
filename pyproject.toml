@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streamlit-polygon-editor"
+version = "0.1.0"
+description = "A Streamlit custom component for interactive polygon editing and scale measurement using OpenLayers."
+readme = "README.md"
+authors = [{ name = "Robert Mařík", email = "robert.marik.cz@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "streamlit>=1.0.0",
+    "Pillow>=8.0.0"
+]
+requires-python = ">=3.8"
+
+[project.urls]
+"Homepage" = "https://github.com/robert-marik/streamlit-polygon-editor"
