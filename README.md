@@ -10,8 +10,7 @@ An interactive, bidirectional Streamlit custom component built on top of OpenLay
 
 #### Install directly from GitHub via `pip`:
 ```bash
-pip install git+[https://github.com/robert-marik/streamlit-polygon-editor.git](https://github.com/robert-marik/streamlit-polygon-editor.git)
-
+pip install git+https://github.com/robert-marik/streamlit-polygon-editor.git
 ```
 
 #### Install locally:
