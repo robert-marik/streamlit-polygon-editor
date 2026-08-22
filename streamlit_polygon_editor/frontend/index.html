@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="static/ol.css">
+    <script src="static/ol.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: sans-serif; background: transparent; }
+        #controls { margin-bottom: 8px; display: flex; gap: 10px; align-items: center; }
+        button {
+            background-color: #ff4b4b; color: white; border: none; 
+            padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+        button:hover { background-color: #d33; }
+        #draw-scale-btn { background-color: #28a745; }
+        #draw-scale-btn:hover { background-color: #218838; }
+        .info { font-size: 13px; color: #555; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="clear-btn">🗑️ Clear Polygon</button>
+        <button id="draw-scale-btn" style="display: none;">📏 Draw New Scale</button>
+        <span class="info">(Shift + Click on vertex = delete vertex)</span>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        function sendMessageToStreamlit(type, data) {
+            window.parent.postMessage(Object.assign({
+                isStreamlitMessage: true,
+                type: type,
+            }, data), "*");
+        }
+
+        function setComponentValue(value) {
+            sendMessageToStreamlit("streamlit:setComponentValue", { value: value });
+        }
+
+        function setFrameHeight(height) {
+            sendMessageToStreamlit("streamlit:setFrameHeight", { height: height });
+        }
+
+        let map, source, drawInteraction, drawScaleInteraction, modifyInteraction, currentImageSrc = "";
+        let polygonFeature = null;
+        let scaleFeature = null;
+        let isScaleEnabled = false;
+
+        function sendCoords() {
+            if (!source) return;
+
+            let polygonCoords = [];
+            let scaleLineCoords = [];
+
+            if (polygonFeature) {
+                const rawCoords = polygonFeature.getGeometry().getCoordinates()[0];
+                polygonCoords = rawCoords.slice(0, -1).map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
+            }
+
+            if (scaleFeature) {
+                const rawCoords = scaleFeature.getGeometry().getCoordinates();
+                scaleLineCoords = rawCoords.map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
+            }
+
+            if (isScaleEnabled) {
+                setComponentValue({
+                    polygon: polygonCoords,
+                    scale_line: scaleLineCoords
+                });
+            } else {
+                setComponentValue(polygonCoords);
+            }
+        }
+
+        function setupInteractions() {
+            if (modifyInteraction) map.removeInteraction(modifyInteraction);
+
+            modifyInteraction = new ol.interaction.Modify({
+                source: source,
+                deleteCondition: function(event) {
+                    return ol.events.condition.singleClick(event) && ol.events.condition.shiftKeyOnly(event);
+                },
+                style: new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 8,
+                        fill: new ol.style.Fill({ color: '#ff0000' }),
+                        stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 }),
+                    }),
+                })
+            });
+
+            modifyInteraction.on('modifyend', sendCoords);
+            map.addInteraction(modifyInteraction);
+
+            if (!polygonFeature) {
+                startPolygonDrawing();
+            }
+        }
+
+        function startPolygonDrawing() {
+            if (drawInteraction) map.removeInteraction(drawInteraction);
+
+            drawInteraction = new ol.interaction.Draw({
+                source: source,
+                type: 'Polygon',
+            });
+
+            drawInteraction.on('drawend', function(evt) {
+                polygonFeature = evt.feature;
+                polygonFeature.set('type', 'polygon');
+                setTimeout(() => {
+                    map.removeInteraction(drawInteraction);
+                    sendCoords();
+                }, 50);
+            });
+
+            map.addInteraction(drawInteraction);
+        }
+
+        function startScaleDrawing() {
+            if (!isScaleEnabled) return;
+            if (drawScaleInteraction) map.removeInteraction(drawScaleInteraction);
+
+            drawScaleInteraction = new ol.interaction.Draw({
+                source: source,
+                type: 'LineString',
+                maxPoints: 2
+            });
+
+            drawScaleInteraction.on('drawend', function(evt) {
+                if (scaleFeature) {
+                    source.removeFeature(scaleFeature);
+                }
+                scaleFeature = evt.feature;
+                scaleFeature.set('type', 'scale');
+
+                setTimeout(() => {
+                    map.removeInteraction(drawScaleInteraction);
+                    sendCoords();
+                }, 50);
+            });
+
+            map.addInteraction(drawScaleInteraction);
+        }
+
+        function loadMap(imageDataUrl, width, height, initialCoords, initialScaleLine, enableScaleLine) {
+            document.getElementById('map').style.width = width + 'px';
+            document.getElementById('map').style.height = height + 'px';
+            setFrameHeight(height + 60);
+
+            isScaleEnabled = enableScaleLine;
+
+            const scaleBtn = document.getElementById('draw-scale-btn');
+            if (isScaleEnabled) {
+                scaleBtn.style.display = 'inline-block';
+            } else {
+                scaleBtn.style.display = 'none';
+            }
+
+            if (map) {
+                map.setTarget(null);
+                map = null;
+            }
+
+            currentImageSrc = imageDataUrl;
+            polygonFeature = null;
+            scaleFeature = null;
+
+            const extent = [0, 0, width, height];
+            const projection = new ol.proj.Projection({
+                code: 'image',
+                units: 'pixels',
+                extent: extent,
+            });
+
+            source = new ol.source.Vector();
+
+            const polygonStyle = new ol.style.Style({
+                fill: new ol.style.Fill({ color: 'rgba(255, 165, 0, 0.25)' }),
+                stroke: new ol.style.Stroke({ color: '#ff3333', width: 2.5 }),
+            });
+
+            const vertexStyle = new ol.style.Style({
+                image: new ol.style.Circle({
+                    radius: 6,
+                    fill: new ol.style.Fill({ color: '#0066ff' }),
+                    stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 }),
+                }),
+                geometry: function(feature) {
+                    if (feature.get('type') === 'polygon') {
+                        const geom = feature.getGeometry();
+                        return new ol.geom.MultiPoint(geom.getCoordinates()[0]);
+                    }
+                }
+            });
+
+            const scaleStyle = new ol.style.Style({
+                stroke: new ol.style.Stroke({ color: '#00cc66', width: 4 }),
+                image: new ol.style.Circle({
+                    radius: 6,
+                    fill: new ol.style.Fill({ color: '#00cc66' }),
+                    stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 }),
+                }),
+                geometry: function(feature) {
+                    if (feature.get('type') === 'scale') {
+                        return new ol.geom.MultiPoint(feature.getGeometry().getCoordinates());
+                    }
+                }
+            });
+
+            const vector = new ol.layer.Vector({
+                source: source,
+                style: function(feature) {
+                    if (feature.get('type') === 'polygon') {
+                        return [polygonStyle, vertexStyle];
+                    }
+                    if (feature.get('type') === 'scale') {
+                        return [scaleStyle, scaleStyle];
+                    }
+                    return [polygonStyle];
+                }
+            });
+
+            map = new ol.Map({
+                target: 'map',
+                layers: [
+                    new ol.layer.Image({
+                        source: new ol.source.ImageStatic({
+                            url: imageDataUrl,
+                            projection: projection,
+                            imageExtent: extent,
+                        }),
+                    }),
+                    vector
+                ],
+                view: new ol.View({
+                    projection: projection,
+                    center: ol.extent.getCenter(extent),
+                    zoom: 2,
+                    maxZoom: 8,
+                }),
+            });
+
+            if (initialCoords && initialCoords.length >= 3) {
+                const closedCoords = [...initialCoords, initialCoords[0]];
+                polygonFeature = new ol.Feature({
+                    geometry: new ol.geom.Polygon([closedCoords])
+                });
+                polygonFeature.set('type', 'polygon');
+                source.addFeature(polygonFeature);
+            }
+
+            if (isScaleEnabled && initialScaleLine && initialScaleLine.length === 2) {
+                scaleFeature = new ol.Feature({
+                    geometry: new ol.geom.LineString(initialScaleLine)
+                });
+                scaleFeature.set('type', 'scale');
+                source.addFeature(scaleFeature);
+            }
+
+            setupInteractions();
+            sendCoords();
+        }
+
+        document.getElementById('clear-btn').addEventListener('click', function() {
+            if (source && polygonFeature) {
+                source.removeFeature(polygonFeature);
+                polygonFeature = null;
+                startPolygonDrawing();
+                sendCoords();
+            }
+        });
+
+        document.getElementById('draw-scale-btn').addEventListener('click', function() {
+            startScaleDrawing();
+        });
+
+        window.addEventListener("message", function(event) {
+            if (event.data.type === "streamlit:render") {
+                const args = event.data.args;
+                loadMap(
+                    args.image_data_url,
+                    args.width,
+                    args.height,
+                    args.initial_coords,
+                    args.initial_scale_line,
+                    args.enable_scale_line ?? true
+                );
+            }
+        });
+
+        sendMessageToStreamlit("streamlit:componentReady", { apiVersion: 1 });
+    </script>
+</body>
+</html>
