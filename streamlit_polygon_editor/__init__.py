@@ -13,6 +13,7 @@ def custom_polygon_editor(
     initial_coords: list[list[float]] = None,
     initial_scale_line: list[list[float]] = None,
     enable_scale_line: bool = True,
+    max_height: int = 550, 
     key: str = "polygon_editor"
 ):
     """
@@ -48,6 +49,7 @@ def custom_polygon_editor(
         image_data_url=image_data_url,
         width=width,
         height=height,
+        max_height=max_height,
         initial_coords=default_polygon,
         initial_scale_line=initial_scale_line if enable_scale_line else [],
         enable_scale_line=enable_scale_line,
@@ -67,9 +69,8 @@ if __name__ == "__main__":
     st.set_page_config(layout="wide")
     st.title("Interactive Polygon & Scale Editor Demo")
 
-    st.sidebar.header("Settings")
-    use_scale = st.sidebar.checkbox("Enable Scale Line", value=True)
-    uploaded_file = st.sidebar.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
+    use_scale = st.checkbox("Enable Scale Line", value=True)
+    uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
 
     if uploaded_file is not None:
         img = Image.open(uploaded_file)
@@ -93,24 +94,26 @@ if __name__ == "__main__":
     ]
 
     real_scale_length = 1.0
-    if use_scale:
-        real_scale_length = st.sidebar.number_input("Real Scale Length (e.g., meters)", value=1.0, step=0.1)
 
-    col1, col2 = st.columns([3, 2])
 
-    with col1:
+
+    c1, c2 = st.columns([5, 1])
+    with c1:
         st.subheader("Canvas")
-        editor_result = custom_polygon_editor(
-            bg_image=img,
-            initial_coords=default_polygon,
-            initial_scale_line=default_scale,
-            enable_scale_line=use_scale,
-            key=f"editor_{img_name}_{use_scale}"
-        )
+        with st.container(border=True):
+            editor_result = custom_polygon_editor(
+                bg_image=img,
+                initial_coords=default_polygon,
+                initial_scale_line=default_scale,
+                enable_scale_line=use_scale,
+                key=f"editor_{img_name}_{use_scale}", 
+                max_height=600
+            )
 
-    with col2:
+    with c2:
         if use_scale:
-            st.subheader("📏 Scale Info")
+            st.subheader("Scale Info")
+            real_scale_length = st.number_input("Real Scale Length (e.g., meters)", value=1.0, step=0.1)
             polygon_coords = editor_result.get("polygon", [])
             scale_line = editor_result.get("scale_line", [])
 
@@ -120,17 +123,49 @@ if __name__ == "__main__":
                 st.write(f"**Segment length:** {px_distance:.2f} px")
                 if px_distance > 0 and real_scale_length > 0:
                     px_per_unit = px_distance / real_scale_length
-                    st.metric("Scale Ratio", f"{px_per_unit:.2f} px / unit")
+                    st.write("Scale Ratio", f"{px_per_unit:.2f} px / unit")
             st.markdown("---")
         else:
             polygon_coords = editor_result
 
-        st.subheader("📍 Polygon Coordinates")
+        st.subheader("Polygon Coordinates")
         if polygon_coords:
             st.success(f"Vertices count: {len(polygon_coords)}")
             st.dataframe(
                 [{"Vertex": i + 1, "X (px)": pt[0], "Y (px)": pt[1]} for i, pt in enumerate(polygon_coords)],
-                use_container_width=True
+                width='stretch',
             )
         else:
             st.warning("Polygon is empty.")
+
+    st.subheader("Geometric properties")
+
+    # compute area and perimeter
+    if len(polygon_coords) >= 3:
+        area = 0.0
+        perimeter = 0.0
+        n = len(polygon_coords)
+        for i in range(n):
+            x1, y1 = polygon_coords[i]
+            x2, y2 = polygon_coords[(i + 1) % n]
+            area += (x1 * y2 - x2 * y1)
+            perimeter += ((x2 - x1)**2 + (y2 - y1)**2) ** 0.5
+        area = abs(area) / 2.0
+
+        if use_scale and len(scale_line) == 2 and real_scale_length > 0:
+            p1, p2 = scale_line[0], scale_line[1]
+            px_distance = ((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2) ** 0.5
+            if px_distance > 0:
+                px_per_unit = px_distance / real_scale_length
+                area_px = area
+                perimeter_px = perimeter
+                area /= (px_per_unit ** 2)
+                perimeter /= px_per_unit
+
+        st.write(f"""In pixels""")
+        st.write(f"**Area:** {area_px:.2f} px²")
+        st.write(f"**Perimeter:** {perimeter_px:.2f} px")
+        if use_scale and len(scale_line) == 2 and real_scale_length > 0:
+            st.write("In custom units (based on scale line):")
+            st.write(f"**Area:** {area:.4f} square units")
+            st.write(f"**Perimeter:** {perimeter:.4f} units")
