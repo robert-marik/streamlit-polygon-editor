@@ -10,8 +10,7 @@ An interactive, bidirectional Streamlit custom component built on top of OpenLay
 
 #### Install directly from GitHub via `pip`:
 ```bash
-pip install git+[https://github.com/robert-marik/streamlit-polygon-editor.git](https://github.com/robert-marik/streamlit-polygon-editor.git)
-
+pip install git+https://github.com/robert-marik/streamlit-polygon-editor.git
 ```
 
 #### Install locally:
@@ -30,21 +29,44 @@ pip install .
 #### Mode 1: Polygon Only (`enable_scale_line=False`)
 
 ```python
-import streamlit as st
+import numpy as np
 from PIL import Image
+import streamlit as st
 from streamlit_polygon_editor import custom_polygon_editor
 
-img = Image.open("your_image.png")
 
-# Returns a list of coordinates: [[x1, y1], [x2, y2], ...]
+def create_default_image(width=800, height=600):
+    x = np.linspace(0, 1, width)
+    y = np.linspace(0, 1, height)
+    xx, yy = np.meshgrid(x, y)
+
+    # Vytvoření RGB přechodu
+    r = xx
+    g = yy
+    b = 1 - xx
+    rgb_array = (np.dstack((r, g, b)) * 255).astype(np.uint8)
+
+    return Image.fromarray(rgb_array)
+
+
+uploaded_file = st.sidebar.file_uploader(
+    "Upload image (PNG/JPG)", type=["png", "jpg", "jpeg"]
+)
+
+if uploaded_file is not None:
+    img = Image.open(uploaded_file)
+else:
+    img = create_default_image()
+
 polygon_coords = custom_polygon_editor(
     bg_image=img,
     initial_coords=[[100, 100], [400, 100], [400, 300], [100, 300]],
     enable_scale_line=False,
-    key="editor_polygon_only"
+    key="editor_polygon_only",
 )
 
 st.write("Polygon Coordinates:", polygon_coords)
+
 
 ```
 
@@ -107,7 +129,7 @@ streamlit-polygon-editor/
 
 1. **Clone Repository:**
 ```bash
-git clone [https://github.com/robert-marik/streamlit-polygon-editor.git](https://github.com/robert-marik/streamlit-polygon-editor.git)
+pip install git+https://github.com/robert-marik/streamlit-polygon-editor.git
 cd streamlit-polygon-editor
 
 ```
@@ -118,15 +140,13 @@ cd streamlit-polygon-editor
 pip install -e .
 
 ```
+Changes made to Python or HTML files will automatically reflect in your test app without reinstallation.
 
-
-*Changes made to Python or HTML files will automatically reflect in your test app without reinstallation.*
 3. **Run Demo App:**
 ```bash
 streamlit run streamlit_polygon_editor/__init__.py
 
 ```
-
 
 
 ### Building & Distribution
