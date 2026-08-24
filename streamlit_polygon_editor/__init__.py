@@ -8,23 +8,25 @@ from PIL import Image
 _COMPONENT_PATH = os.path.join(os.path.dirname(__file__), "frontend")
 _polygon_editor_func = components.declare_component("polygon_editor", path=_COMPONENT_PATH)
 
+def length_of_line(line):
+    "Calculate the length of a piecewise linear line."
+    total_length = 0
+    for i in range(len(line) - 1):
+        x1, y1 = line[i]
+        x2, y2 = line[i + 1]
+        total_length += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+    return total_length
+
 def custom_polygon_editor(
     bg_image: Image.Image,
-    initial_coords: list[list[float]] = None,
-    initial_scale_line: list[list[float]] = None,
-    enable_scale_line: bool = True,
+    initial_polygons: list[list[list[float]]] = None,
+    initial_lines: list[list[list[float]]] = None,
+    active_tool: str = "polygon", # "polygon" nebo "line"
+    poly_view_mode: str = "all",
+    line_view_mode: str = "all",
     max_height: int = 550, 
     key: str = "polygon_editor"
 ):
-    """
-    Bidirectional Streamlit polygon editor component with optional scale line measurement.
-    
-    If enable_scale_line == True, returns dict:
-        {"polygon": [[x, y], ...], "scale_line": [[x1, y1], [x2, y2]]}
-    
-    If enable_scale_line == False, returns list:
-        [[x, y], ...]
-    """
     width, height = bg_image.size
 
     buffered = io.BytesIO()
@@ -32,17 +34,17 @@ def custom_polygon_editor(
     img_str = base64.b64encode(buffered.getvalue()).decode()
     image_data_url = f"data:image/png;base64,{img_str}"
 
-    default_polygon = initial_coords if initial_coords else []
-    
-    if enable_scale_line and initial_scale_line is None:
-        initial_scale_line = [
-            [int(width * 0.2), int(height * 0.9)],
-            [int(width * 0.5), int(height * 0.9)]
-        ]
+    default_polygons = initial_polygons if initial_polygons is not None else []
+    default_lines = initial_lines if initial_lines is not None else []
 
     default_val = {
-        "polygon": default_polygon,
-        "scale_line": initial_scale_line if enable_scale_line else []
+        "active_tool": active_tool,
+        "active_polygon_index": 0,
+        "active_line_index": 0,
+        "poly_view_mode": poly_view_mode,
+        "line_view_mode": line_view_mode,
+        "polygons": default_polygons,
+        "lines": default_lines
     }
 
     component_value = _polygon_editor_func(
@@ -50,122 +52,116 @@ def custom_polygon_editor(
         width=width,
         height=height,
         max_height=max_height,
-        initial_coords=default_polygon,
-        initial_scale_line=initial_scale_line if enable_scale_line else [],
-        enable_scale_line=enable_scale_line,
+        initial_polygons=default_polygons,
+        initial_lines=default_lines,
+        active_tool=active_tool,
+        poly_view_mode=poly_view_mode,
+        line_view_mode=line_view_mode,
         key=key,
-        default=default_val if enable_scale_line else default_polygon
+        default=default_val
     )
 
-    if not enable_scale_line:
-        if isinstance(component_value, dict):
-            return component_value.get("polygon", [])
-        return component_value if isinstance(component_value, list) else default_polygon
-    
     return component_value if isinstance(component_value, dict) else default_val
 
 
 if __name__ == "__main__":
     st.set_page_config(layout="wide")
-    st.title("Interactive Polygon & Scale Editor Demo")
+    st.title("Interactive Multi-Polygon & Distance Measurement Editor")
 
-    use_scale = st.checkbox("Enable Scale Line", value=True)
     uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
 
     if uploaded_file is not None:
         img = Image.open(uploaded_file)
         img_name = uploaded_file.name
     else:
-        img = Image.new('RGB', (700, 450), color=(240, 240, 245))
+        img = Image.new('RGB', (800, 500), color=(240, 240, 245))
         img_name = "default_canvas"
 
     w, h = img.size
 
-    default_polygon = [
-        [int(w * 0.2), int(h * 0.2)],
-        [int(w * 0.8), int(h * 0.2)],
-        [int(w * 0.8), int(h * 0.7)],
-        [int(w * 0.2), int(h * 0.7)]
+    default_polygons = [
+        [
+            [int(w * 0.15), int(h * 0.15)],
+            [int(w * 0.45), int(h * 0.15)],
+            [int(w * 0.45), int(h * 0.55)],
+            [int(w * 0.15), int(h * 0.55)]
+        ]
     ]
 
-    default_scale = [
-        [int(w * 0.2), int(h * 0.85)],
-        [int(w * 0.6), int(h * 0.85)]
+    default_lines = [
+        [
+            [int(w * 0.15), int(h * 0.8)],
+            [int(w * 0.55), int(h * 0.8)]
+        ]
     ]
 
-    real_scale_length = 1.0
-
-
-
-    c1, c2 = st.columns([5, 1])
+    c1, c2 = st.columns([5, 2])
     with c1:
         st.subheader("Canvas")
         with st.container(border=True):
             editor_result = custom_polygon_editor(
                 bg_image=img,
-                initial_coords=default_polygon,
-                initial_scale_line=default_scale,
-                enable_scale_line=use_scale,
-                key=f"editor_{img_name}_{use_scale}", 
+                initial_polygons=default_polygons,
+                initial_lines=default_lines,
+                key=f"editor_{img_name}", 
                 max_height=600
             )
 
     with c2:
-        if use_scale:
-            st.subheader("Scale Info")
-            real_scale_length = st.number_input("Real Scale Length (e.g., meters)", value=1.0, step=0.1)
-            polygon_coords = editor_result.get("polygon", [])
-            scale_line = editor_result.get("scale_line", [])
 
-            if len(scale_line) == 2:
-                p1, p2 = scale_line[0], scale_line[1]
-                px_distance = ((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2) ** 0.5
-                st.write(f"**Segment length:** {px_distance:.2f} px")
-                if px_distance > 0 and real_scale_length > 0:
-                    px_per_unit = px_distance / real_scale_length
-                    st.write("Scale Ratio", f"{px_per_unit:.2f} px / unit")
-            st.markdown("---")
+        st.subheader("Scale & Lines")
+
+
+        st.write(f"Active Tool: **{editor_result.get('active_tool')}**")
+        # You can also read the active tool: editor_result.get("active_tool")
+        real_scale_length = st.number_input("Reference line #1 length (in meters)", value=1.0, step=0.1)
+        
+        lines_coords = editor_result.get("lines", [])
+        polygons_coords = editor_result.get("polygons", [])
+        active_poly_idx = editor_result.get("active_polygon_index", 0)
+        active_line_idx = editor_result.get("active_line_index", 0)
+
+        px_per_unit = 0.0
+        if lines_coords and len(lines_coords[0]) >= 2:
+            px_dist = length_of_line(lines_coords[0])
+            if px_dist > 0 and real_scale_length > 0:
+                px_per_unit = px_dist / real_scale_length
+                st.info(f"Scale from line #1: {px_per_unit:.2f} px / m")
+
+        st.markdown("#### Measured Lines")
+        if lines_coords:
+            for idx, line in enumerate(lines_coords):
+                if len(line) >= 2:
+                    dist_px = length_of_line(line)
+                    is_active = (idx == active_line_idx and editor_result.get("active_tool") == "line")
+                    label = f"**Line #{idx + 1}** {'(Selected)' if is_active else ''}"
+                    st.write(label)
+                    st.write(f"- Length: `{dist_px:.2f} px`")
+                    if px_per_unit > 0:
+                        st.write(f"- Actual Length: `{dist_px / px_per_unit:.2f} m`")
         else:
-            polygon_coords = editor_result
+            st.write("No lines.")
 
-        st.subheader("Polygon Coordinates")
-        if polygon_coords:
-            st.success(f"Vertices count: {len(polygon_coords)}")
-            st.dataframe(
-                [{"Vertex": i + 1, "X (px)": pt[0], "Y (px)": pt[1]} for i, pt in enumerate(polygon_coords)],
-                width='stretch',
-            )
+        st.markdown("---")
+        st.subheader("Polygons & Geometry")
+        if polygons_coords:
+            st.write(f"Total polygons: **{len(polygons_coords)}**")
+            
+            for idx, poly in enumerate(polygons_coords):
+                if len(poly) >= 3:
+                    area = 0.0
+                    perimeter = 0.0
+                    n = len(poly)
+                    for i in range(n):
+                        x1, y1 = poly[i]
+                        x2, y2 = poly[(i + 1) % n]
+                        area += (x1 * y2 - x2 * y1)
+                        perimeter += ((x2 - x1)**2 + (y2 - y1)**2) ** 0.5
+                    area = abs(area) / 2.0
+
+                    is_act = (idx == active_poly_idx and editor_result.get("active_tool") == "polygon")
+                    st.markdown(f"**Polygon #{idx + 1}** {'⭐' if is_act else ''}")
+                    st.write(f"- Perimeter: `{perimeter:.2f} px`" + (f" (`{perimeter / px_per_unit:.2f} m`)" if px_per_unit > 0 else ""))
+                    st.write(f"- Area: `{area:.2f} px²`" + (f" (`{area / (px_per_unit**2):.4f} m²`)" if px_per_unit > 0 else ""))
         else:
-            st.warning("Polygon is empty.")
-
-    st.subheader("Geometric properties")
-
-    # compute area and perimeter
-    if len(polygon_coords) >= 3:
-        area = 0.0
-        perimeter = 0.0
-        n = len(polygon_coords)
-        for i in range(n):
-            x1, y1 = polygon_coords[i]
-            x2, y2 = polygon_coords[(i + 1) % n]
-            area += (x1 * y2 - x2 * y1)
-            perimeter += ((x2 - x1)**2 + (y2 - y1)**2) ** 0.5
-        area = abs(area) / 2.0
-
-        if use_scale and len(scale_line) == 2 and real_scale_length > 0:
-            p1, p2 = scale_line[0], scale_line[1]
-            px_distance = ((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2) ** 0.5
-            if px_distance > 0:
-                px_per_unit = px_distance / real_scale_length
-                area_px = area
-                perimeter_px = perimeter
-                area /= (px_per_unit ** 2)
-                perimeter /= px_per_unit
-
-        st.write(f"""In pixels""")
-        st.write(f"**Area:** {area_px:.2f} px²")
-        st.write(f"**Perimeter:** {perimeter_px:.2f} px")
-        if use_scale and len(scale_line) == 2 and real_scale_length > 0:
-            st.write("In custom units (based on scale line):")
-            st.write(f"**Area:** {area:.4f} square units")
-            st.write(f"**Perimeter:** {perimeter:.4f} units")
+            st.warning("No polygons.")

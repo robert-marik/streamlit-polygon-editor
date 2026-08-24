@@ -5,32 +5,116 @@
     <link rel="stylesheet" href="static/ol.css">
     <script src="static/ol.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: sans-serif; background: transparent; overflow: hidden; }
-        #controls { margin-bottom: 8px; display: flex; gap: 10px; align-items: center; 
-            height: 35px;
-            box-sizing: border-box;}
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: transparent; overflow: hidden; }
+        #toolbar { 
+            padding: 8px 12px;
+            display: flex; 
+            gap: 12px; 
+            align-items: center; 
+            flex-wrap: wrap;
+            background: #ffffff;
+            border-bottom: 1px solid #e0e0e0;
+            box-sizing: border-box;
+            font-size: 13px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .btn-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #f8f9fa;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+        }
+        .group-label {
+            font-weight: 600;
+            font-size: 11px;
+            color: #495057;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-right: 2px;
+        }
         button {
-            background-color: #ff4b4b; color: white; border: none; 
-            padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold;
+            background-color: #ffffff; 
+            color: #212529; 
+            border: 1px solid #ced4da; 
+            padding: 4px 10px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: 500;
+            font-size: 12px;
+            transition: all 0.15s ease;
         }
-        button:hover { background-color: #d33; }
-        #draw-scale-btn { background-color: #28a745; }
-        #draw-scale-btn:hover { background-color: #218838; }
-        .info { font-size: 13px; color: #555; }
-
-        #map {
-            width: 100%;
-            max-width: 100%;
-            height: 550px; /* Výchozí výška plátna */
-            max-height: 700px;  /* Případný strop pro velké monitory */
+        button:hover { background-color: #e9ecef; }
+        button.primary { background-color: #0d6efd; color: white; border-color: #0d6efd; }
+        button.primary:hover { background-color: #0b5ed7; }
+        button.danger { background-color: #dc3545; color: white; border-color: #dc3545; }
+        button.danger:hover { background-color: #bb2d3b; }
+        
+        /* Přepínače (Tool / View) */
+        .toggle-switch {
+            display: flex;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #ced4da;
+            background: #e9ecef;
         }
+        .toggle-btn {
+            border: none;
+            border-radius: 0;
+            background: transparent;
+            padding: 4px 10px;
+            font-size: 12px;
+            color: #495057;
+        }
+        .toggle-btn.active {
+            background: #0d6efd;
+            color: white;
+            font-weight: 600;
+        }
+        
+        .active-badge {
+            font-size: 12px;
+            font-weight: bold;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: #e7f5ff;
+            color: #1971c2;
+            min-width: 75px;
+            text-align: center;
+        }
+        .info { font-size: 11px; color: #868e96; margin-left: auto; }
+        #map { width: 100%; height: 550px; }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <button id="clear-btn">🗑️ Clear Polygon</button>
-        <button id="draw-scale-btn" style="display: none;">📏 Draw New Scale</button>
-        <span class="info">(Shift + Click on vertex = delete vertex)</span>
+    <div id="toolbar">
+        <!-- Přepínač aktivního objektu (Polygon vs Úsečka) -->
+        <div class="btn-group">
+            <span class="group-label"></span>
+            <div class="toggle-switch">
+                <button id="tool-poly-btn" class="toggle-btn active">🔲 Polygon</button>
+                <button id="tool-line-btn" class="toggle-btn">📏 Line</button>
+            </div>
+        </div>
+
+        <!-- Jednotné ovládací prvky -->
+        <div class="btn-group">
+            <button id="add-btn" class="primary">➕ New</button>
+            <button id="prev-btn">◀</button>
+            <span id="active-badge" class="active-badge">#1 out of 1</span>
+            <button id="next-btn">▶</button>
+            <button id="del-btn" class="danger">🗑️ Delete</button>
+            
+            <span class="group-label" style="margin-left: 8px;">Show:</span>
+            <div class="toggle-switch">
+                <button id="view-all-btn" class="toggle-btn active">All</button>
+                <button id="view-single-btn" class="toggle-btn">Selected</button>
+            </div>
+        </div>
+
+        <span class="info">(Shift + Click on point = delete point)</span>
     </div>
     <div id="map"></div>
 
@@ -50,137 +134,233 @@
             sendMessageToStreamlit("streamlit:setFrameHeight", { height: height });
         }
 
-        let map, source, drawInteraction, drawScaleInteraction, modifyInteraction, currentImageSrc = "";
-        let polygonFeature = null;
-        let scaleFeature = null;
-        let isScaleEnabled = false;
+        let map, source, drawInteraction, modifyInteraction, selectInteraction;
+        let polygons = []; 
+        let lines = [];    
+        
+        let activeTool = 'polygon'; // 'polygon' nebo 'line'
+        let activePolygonIndex = 0;
+        let activeLineIndex = 0;
+        let polyViewMode = 'all';  
+        let lineViewMode = 'all';  
 
-        function sendCoords() {
-            if (!source) return;
+        function sendDataToStreamlit() {
+            let polyData = polygons.map(f => {
+                const geom = f.getGeometry();
+                if (!geom) return [];
+                const rawCoords = geom.getCoordinates()[0] || [];
+                return rawCoords.slice(0, -1).map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
+            });
 
-            let polygonCoords = [];
-            let scaleLineCoords = [];
+            let lineData = lines.map(f => {
+                const geom = f.getGeometry();
+                if (!geom) return [];
+                const rawCoords = geom.getCoordinates() || [];
+                return rawCoords.map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
+            });
 
-            if (polygonFeature) {
-                const rawCoords = polygonFeature.getGeometry().getCoordinates()[0];
-                polygonCoords = rawCoords.slice(0, -1).map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
-            }
+            setComponentValue({
+                active_tool: activeTool,
+                active_polygon_index: activePolygonIndex,
+                active_line_index: activeLineIndex,
+                poly_view_mode: polyViewMode,
+                line_view_mode: lineViewMode,
+                polygons: polyData,
+                lines: lineData
+            });
+        }
 
-            if (scaleFeature) {
-                const rawCoords = scaleFeature.getGeometry().getCoordinates();
-                scaleLineCoords = rawCoords.map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
-            }
+        function updateUIControls() {
+            // Přepínač typu (Polygon vs Line)
+            document.getElementById('tool-poly-btn').classList.toggle('active', activeTool === 'polygon');
+            document.getElementById('tool-line-btn').classList.toggle('active', activeTool === 'line');
 
-            if (isScaleEnabled) {
-                setComponentValue({
-                    polygon: polygonCoords,
-                    scale_line: scaleLineCoords
-                });
+            const badge = document.getElementById('active-badge');
+            
+            if (activeTool === 'polygon') {
+                if (polygons.length > 0) {
+                    badge.textContent = `#${activePolygonIndex + 1} out of ${polygons.length}`;
+                } else {
+                    badge.textContent = "None";
+                }
+                document.getElementById('view-all-btn').classList.toggle('active', polyViewMode === 'all');
+                document.getElementById('view-single-btn').classList.toggle('active', polyViewMode === 'single');
             } else {
-                setComponentValue(polygonCoords);
+                if (lines.length > 0) {
+                    badge.textContent = `#${activeLineIndex + 1} out of ${lines.length}`;
+                } else {
+                    badge.textContent = "None";
+                }
+                document.getElementById('view-all-btn').classList.toggle('active', lineViewMode === 'all');
+                document.getElementById('view-single-btn').classList.toggle('active', lineViewMode === 'single');
+            }
+
+            if (source) source.changed();
+        }
+
+        function getFeatureStyle(feature) {
+            const type = feature.get('type');
+            const index = feature.get('index');
+
+            if (type === 'polygon') {
+                if (polyViewMode === 'single' && index !== activePolygonIndex) {
+                    return null; 
+                }
+                const isActive = (activeTool === 'polygon' && index === activePolygonIndex);
+                return [
+                    new ol.style.Style({
+                        fill: new ol.style.Fill({ 
+                            color: isActive ? 'rgba(13, 110, 253, 0.25)' : 'rgba(108, 117, 125, 0.15)' 
+                        }),
+                        stroke: new ol.style.Stroke({ 
+                            color: isActive ? '#0d6efd' : '#6c757d', 
+                            width: isActive ? 3 : 2 
+                        }),
+                    }),
+                    new ol.style.Style({
+                        image: new ol.style.Circle({
+                            radius: isActive ? 6 : 4,
+                            fill: new ol.style.Fill({ color: isActive ? '#0d6efd' : '#ffffff' }),
+                            stroke: new ol.style.Stroke({ color: isActive ? '#ffffff' : '#0d6efd', width: 2 }),
+                        }),
+                        geometry: function(f) {
+                            const geom = f.getGeometry();
+                            const coords = geom.getCoordinates()[0] || [];
+                            return new ol.geom.MultiPoint(coords.slice(0, -1));
+                        }
+                    })
+                ];
+            }
+
+            if (type === 'line') {
+                if (lineViewMode === 'single' && index !== activeLineIndex) {
+                    return null; 
+                }
+                const isActive = (activeTool === 'line' && index === activeLineIndex);
+                return [
+                    new ol.style.Style({
+                        stroke: new ol.style.Stroke({ 
+                            color: isActive ? '#198754' : '#20c997', 
+                            width: isActive ? 4 : 2.5 
+                        })
+                    }),
+                    new ol.style.Style({
+                        image: new ol.style.Circle({
+                            radius: isActive ? 6 : 4,
+                            fill: new ol.style.Fill({ color: isActive ? '#198754' : '#ffffff' }),
+                            stroke: new ol.style.Stroke({ color: isActive ? '#ffffff' : '#198754', width: 2 }),
+                        }),
+                        geometry: function(f) {
+                            return new ol.geom.MultiPoint(f.getGeometry().getCoordinates());
+                        }
+                    })
+                ];
             }
         }
 
         function setupInteractions() {
+            if (drawInteraction) map.removeInteraction(drawInteraction);
             if (modifyInteraction) map.removeInteraction(modifyInteraction);
+            if (selectInteraction) map.removeInteraction(selectInteraction);
 
-            modifyInteraction = new ol.interaction.Modify({
-                source: source,
-                deleteCondition: function(event) {
-                    return ol.events.condition.singleClick(event) && ol.events.condition.shiftKeyOnly(event);
+            selectInteraction = new ol.interaction.Select({
+                condition: ol.events.condition.click,
+                style: function(feature) {
+                    return getFeatureStyle(feature);
                 },
-                style: new ol.style.Style({
-                    image: new ol.style.Circle({
-                        radius: 8,
-                        fill: new ol.style.Fill({ color: '#ff0000' }),
-                        stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 }),
-                    }),
-                })
+                filter: function(feature) {
+                    const type = feature.get('type');
+                    const idx = feature.get('index');
+                    if (type === 'polygon' && polyViewMode === 'single' && idx !== activePolygonIndex) return false;
+                    if (type === 'line' && lineViewMode === 'single' && idx !== activeLineIndex) return false;
+                    return true;
+                }
             });
 
-            modifyInteraction.on('modifyend', sendCoords);
-            map.addInteraction(modifyInteraction);
+            selectInteraction.on('select', function(e) {
+                const selected = e.selected[0];
+                if (selected) {
+                    const type = selected.get('type');
+                    const idx = selected.get('index');
+                    if (type === 'polygon') {
+                        activeTool = 'polygon';
+                        activePolygonIndex = idx;
+                    } else if (type === 'line') {
+                        activeTool = 'line';
+                        activeLineIndex = idx;
+                    }
+                    updateUIControls();
+                    sendDataToStreamlit();
+                }
+            });
 
-            if (!polygonFeature) {
-                startPolygonDrawing();
-            }
+            map.addInteraction(selectInteraction);
+
+            modifyInteraction = new ol.interaction.Modify({
+                features: selectInteraction.getFeatures(),
+                deleteCondition: function(event) {
+                    return ol.events.condition.singleClick(event) && ol.events.condition.shiftKeyOnly(event);
+                }
+            });
+
+            modifyInteraction.on('modifyend', sendDataToStreamlit);
+            map.addInteraction(modifyInteraction);
         }
 
-        function startPolygonDrawing() {
+        function startDrawing() {
             if (drawInteraction) map.removeInteraction(drawInteraction);
 
             drawInteraction = new ol.interaction.Draw({
                 source: source,
-                type: 'Polygon',
+                type: activeTool === 'polygon' ? 'Polygon' : 'LineString',
+                maxPoints: activeTool === 'line' ? 2 : undefined
             });
 
             drawInteraction.on('drawend', function(evt) {
-                polygonFeature = evt.feature;
-                polygonFeature.set('type', 'polygon');
+                const feature = evt.feature;
+                if (activeTool === 'polygon') {
+                    const newIdx = polygons.length;
+                    feature.set('type', 'polygon');
+                    feature.set('index', newIdx);
+                    polygons.push(feature);
+                    activePolygonIndex = newIdx;
+                } else {
+                    const newIdx = lines.length;
+                    feature.set('type', 'line');
+                    feature.set('index', newIdx);
+                    lines.push(feature);
+                    activeLineIndex = newIdx;
+                }
+
                 setTimeout(() => {
                     map.removeInteraction(drawInteraction);
-                    sendCoords();
+                    updateUIControls();
+                    sendDataToStreamlit();
                 }, 50);
             });
 
             map.addInteraction(drawInteraction);
         }
 
-        function startScaleDrawing() {
-            if (!isScaleEnabled) return;
-            if (drawScaleInteraction) map.removeInteraction(drawScaleInteraction);
-
-            drawScaleInteraction = new ol.interaction.Draw({
-                source: source,
-                type: 'LineString',
-                maxPoints: 2
-            });
-
-            drawScaleInteraction.on('drawend', function(evt) {
-                if (scaleFeature) {
-                    source.removeFeature(scaleFeature);
-                }
-                scaleFeature = evt.feature;
-                scaleFeature.set('type', 'scale');
-
-                setTimeout(() => {
-                    map.removeInteraction(drawScaleInteraction);
-                    sendCoords();
-                }, 50);
-            });
-
-            map.addInteraction(drawScaleInteraction);
-        }
-
-        function loadMap(imageDataUrl, width, height, maxHeight, initialCoords, initialScaleLine, enableScaleLine) {
+        function loadMap(imageDataUrl, width, height, maxHeight, initialPolygons, initialLines, defaultPolyView, defaultLineView, defaultTool) {
             const mapElement = document.getElementById('map');
-            
-             // Použije se výška předaná z Pythonu (pokud je obrázek menší, použije výšku obrázku)
             const limitHeight = maxHeight || 550;
             const canvasHeight = Math.min(height, limitHeight);
-
             mapElement.style.height = canvasHeight + 'px';
             
-            // 2. Nastavíme výšku celému Streamlit iframe
-            setFrameHeight(canvasHeight + 45);
+            setFrameHeight(canvasHeight + 55);
 
-            isScaleEnabled = enableScaleLine;
-
-            const scaleBtn = document.getElementById('draw-scale-btn');
-            if (isScaleEnabled) {
-                scaleBtn.style.display = 'inline-block';
-            } else {
-                scaleBtn.style.display = 'none';
-            }
+            polyViewMode = defaultPolyView || 'all';
+            lineViewMode = defaultLineView || 'all';
+            if (defaultTool) activeTool = defaultTool;
 
             if (map) {
                 map.setTarget(null);
                 map = null;
             }
 
-            currentImageSrc = imageDataUrl;
-            polygonFeature = null;
-            scaleFeature = null;
+            polygons = [];
+            lines = [];
 
             const extent = [0, 0, width, height];
             const projection = new ol.proj.Projection({
@@ -191,50 +371,9 @@
 
             source = new ol.source.Vector();
 
-            const polygonStyle = new ol.style.Style({
-                fill: new ol.style.Fill({ color: 'rgba(255, 165, 0, 0.25)' }),
-                stroke: new ol.style.Stroke({ color: '#ff3333', width: 2.5 }),
-            });
-
-            const vertexStyle = new ol.style.Style({
-                image: new ol.style.Circle({
-                    radius: 6,
-                    fill: new ol.style.Fill({ color: '#0066ff' }),
-                    stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 }),
-                }),
-                geometry: function(feature) {
-                    if (feature.get('type') === 'polygon') {
-                        const geom = feature.getGeometry();
-                        return new ol.geom.MultiPoint(geom.getCoordinates()[0]);
-                    }
-                }
-            });
-
-            const scaleStyle = new ol.style.Style({
-                stroke: new ol.style.Stroke({ color: '#00cc66', width: 4 }),
-                image: new ol.style.Circle({
-                    radius: 6,
-                    fill: new ol.style.Fill({ color: '#00cc66' }),
-                    stroke: new ol.style.Stroke({ color: '#ffffff', width: 2 }),
-                }),
-                geometry: function(feature) {
-                    if (feature.get('type') === 'scale') {
-                        return new ol.geom.MultiPoint(feature.getGeometry().getCoordinates());
-                    }
-                }
-            });
-
             const vector = new ol.layer.Vector({
                 source: source,
-                style: function(feature) {
-                    if (feature.get('type') === 'polygon') {
-                        return [polygonStyle, vertexStyle];
-                    }
-                    if (feature.get('type') === 'scale') {
-                        return [scaleStyle, scaleStyle];
-                    }
-                    return [polygonStyle];
-                }
+                style: getFeatureStyle
             });
 
             map = new ol.Map({
@@ -255,43 +394,121 @@
                 }),
             });
 
-            // 3. Spočítáme zoom až ve chvíli, kdy DOM plně vykreslil div s novými rozměry
             setTimeout(() => {
                 map.updateSize();
                 map.getView().fit(extent, { size: map.getSize() });
             }, 100);
 
-            if (initialCoords && initialCoords.length >= 3) {
-                const closedCoords = [...initialCoords, initialCoords[0]];
-                polygonFeature = new ol.Feature({
-                    geometry: new ol.geom.Polygon([closedCoords])
+            if (initialPolygons && Array.isArray(initialPolygons)) {
+                initialPolygons.forEach((polyCoords, idx) => {
+                    if (polyCoords.length >= 3) {
+                        const closedCoords = [...polyCoords, polyCoords[0]];
+                        const feat = new ol.Feature({
+                            geometry: new ol.geom.Polygon([closedCoords])
+                        });
+                        feat.set('type', 'polygon');
+                        feat.set('index', idx);
+                        polygons.push(feat);
+                        source.addFeature(feat);
+                    }
                 });
-                polygonFeature.set('type', 'polygon');
-                source.addFeature(polygonFeature);
             }
 
-            if (isScaleEnabled && initialScaleLine && initialScaleLine.length === 2) {
-                scaleFeature = new ol.Feature({
-                    geometry: new ol.geom.LineString(initialScaleLine)
+            if (initialLines && Array.isArray(initialLines)) {
+                initialLines.forEach((lineCoords, idx) => {
+                    if (lineCoords.length >= 2) {
+                        const feat = new ol.Feature({
+                            geometry: new ol.geom.LineString(lineCoords)
+                        });
+                        feat.set('type', 'line');
+                        feat.set('index', idx);
+                        lines.push(feat);
+                        source.addFeature(feat);
+                    }
                 });
-                scaleFeature.set('type', 'scale');
-                source.addFeature(scaleFeature);
             }
 
             setupInteractions();
-            sendCoords();
+            updateUIControls();
+            sendDataToStreamlit();
         }
-        document.getElementById('clear-btn').addEventListener('click', function() {
-            if (source && polygonFeature) {
-                source.removeFeature(polygonFeature);
-                polygonFeature = null;
-                startPolygonDrawing();
-                sendCoords();
-            }
+
+        // Tlačítka pro přepínání nástroje
+        document.getElementById('tool-poly-btn').addEventListener('click', () => {
+            activeTool = 'polygon';
+            updateUIControls();
+            sendDataToStreamlit();
         });
 
-        document.getElementById('draw-scale-btn').addEventListener('click', function() {
-            startScaleDrawing();
+        document.getElementById('tool-line-btn').addEventListener('click', () => {
+            activeTool = 'line';
+            updateUIControls();
+            sendDataToStreamlit();
+        });
+
+        // Akční tlačítka (Společná pro oba typy)
+        document.getElementById('add-btn').addEventListener('click', () => startDrawing());
+
+        document.getElementById('prev-btn').addEventListener('click', () => {
+            if (activeTool === 'polygon') {
+                if (polygons.length > 0) {
+                    activePolygonIndex = (activePolygonIndex - 1 + polygons.length) % polygons.length;
+                }
+            } else {
+                if (lines.length > 0) {
+                    activeLineIndex = (activeLineIndex - 1 + lines.length) % lines.length;
+                }
+            }
+            updateUIControls();
+            sendDataToStreamlit();
+        });
+
+        document.getElementById('next-btn').addEventListener('click', () => {
+            if (activeTool === 'polygon') {
+                if (polygons.length > 0) {
+                    activePolygonIndex = (activePolygonIndex + 1) % polygons.length;
+                }
+            } else {
+                if (lines.length > 0) {
+                    activeLineIndex = (activeLineIndex + 1) % lines.length;
+                }
+            }
+            updateUIControls();
+            sendDataToStreamlit();
+        });
+
+        document.getElementById('del-btn').addEventListener('click', () => {
+            if (activeTool === 'polygon') {
+                if (polygons.length > 0 && activePolygonIndex < polygons.length) {
+                    const removed = polygons.splice(activePolygonIndex, 1)[0];
+                    source.removeFeature(removed);
+                    polygons.forEach((f, idx) => f.set('index', idx));
+                    activePolygonIndex = Math.max(0, activePolygonIndex - 1);
+                }
+            } else {
+                if (lines.length > 0 && activeLineIndex < lines.length) {
+                    const removed = lines.splice(activeLineIndex, 1)[0];
+                    source.removeFeature(removed);
+                    lines.forEach((f, idx) => f.set('index', idx));
+                    activeLineIndex = Math.max(0, activeLineIndex - 1);
+                }
+            }
+            updateUIControls();
+            sendDataToStreamlit();
+        });
+
+        document.getElementById('view-all-btn').addEventListener('click', () => {
+            if (activeTool === 'polygon') polyViewMode = 'all';
+            else lineViewMode = 'all';
+            updateUIControls();
+            sendDataToStreamlit();
+        });
+
+        document.getElementById('view-single-btn').addEventListener('click', () => {
+            if (activeTool === 'polygon') polyViewMode = 'single';
+            else lineViewMode = 'single';
+            updateUIControls();
+            sendDataToStreamlit();
         });
 
         window.addEventListener("message", function(event) {
@@ -302,9 +519,11 @@
                     args.width,
                     args.height,
                     args.max_height,
-                    args.initial_coords,
-                    args.initial_scale_line,
-                    args.enable_scale_line ?? true
+                    args.initial_polygons,
+                    args.initial_lines,
+                    args.poly_view_mode,
+                    args.line_view_mode,
+                    args.active_tool
                 );
             }
         });
