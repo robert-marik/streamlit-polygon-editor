@@ -170,6 +170,7 @@
             });
         }
 
+
         function updateUIControls() {
             // Přepínač typu (Polygon vs Line)
             document.getElementById('tool-poly-btn').classList.toggle('active', activeTool === 'polygon');
@@ -193,6 +194,21 @@
                 }
                 document.getElementById('view-all-btn').classList.toggle('active', lineViewMode === 'all');
                 document.getElementById('view-single-btn').classList.toggle('active', lineViewMode === 'single');
+            }
+
+            // --- PŘIDANÝ KÓD: Aktualizace výberu v selectInteraction ---
+            if (selectInteraction) {
+                const selFeatures = selectInteraction.getFeatures();
+                selFeatures.clear();
+                let currentFeature = null;
+                if (activeTool === 'polygon' && polygons[activePolygonIndex]) {
+                    currentFeature = polygons[activePolygonIndex];
+                } else if (activeTool === 'line' && lines[activeLineIndex]) {
+                    currentFeature = lines[activeLineIndex];
+                }
+                if (currentFeature) {
+                    selFeatures.push(currentFeature);
+                }
             }
 
             if (source) source.changed();
@@ -258,6 +274,7 @@
             }
         }
 
+
         function setupInteractions() {
             if (drawInteraction) map.removeInteraction(drawInteraction);
             if (modifyInteraction) map.removeInteraction(modifyInteraction);
@@ -307,6 +324,7 @@
             map.addInteraction(modifyInteraction);
         }
 
+
         function startDrawing() {
             if (drawInteraction) map.removeInteraction(drawInteraction);
 
@@ -334,7 +352,7 @@
 
                 setTimeout(() => {
                     map.removeInteraction(drawInteraction);
-                    updateUIControls();
+                    updateUIControls(); // Tento krok vloží nově nakreslený prvek do vybraných prvků
                     sendDataToStreamlit();
                 }, 50);
             });
