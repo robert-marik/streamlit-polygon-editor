@@ -350,7 +350,11 @@
             if (selectInteraction) map.removeInteraction(selectInteraction);
 
             selectInteraction = new ol.interaction.Select({
-                condition: ol.events.condition.click,
+                // ÚPRAVA: Vybereme objekt jen při kliknutí BEZ klávesy Shift
+                condition: function(mapBrowserEvent) {
+                    return ol.events.condition.click(mapBrowserEvent) && 
+                        !ol.events.condition.shiftKeyOnly(mapBrowserEvent);
+                },
                 style: function(feature) {
                     return getFeatureStyle(feature);
                 },
@@ -389,7 +393,6 @@
                 }
             });
 
-            // Uložit stav před začátkem úpravy bodu/bodu smazání
             modifyInteraction.on('modifystart', function() {
                 pushHistoryState();
             });
