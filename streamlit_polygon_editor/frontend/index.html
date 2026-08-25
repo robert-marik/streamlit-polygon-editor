@@ -47,12 +47,12 @@
             transition: all 0.15s ease;
         }
         button:hover { background-color: #e9ecef; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
         button.primary { background-color: #0d6efd; color: white; border-color: #0d6efd; }
         button.primary:hover { background-color: #0b5ed7; }
         button.danger { background-color: #dc3545; color: white; border-color: #dc3545; }
         button.danger:hover { background-color: #bb2d3b; }
         
-        /* Přepínače (Tool / View) */
         .toggle-switch {
             display: flex;
             border-radius: 4px;
@@ -90,7 +90,6 @@
 </head>
 <body>
     <div id="toolbar">
-        <!-- Přepínač aktivního objektu (Polygon vs Úsečka) -->
         <div class="btn-group">
             <span class="group-label"></span>
             <div class="toggle-switch">
@@ -99,9 +98,10 @@
             </div>
         </div>
 
-        <!-- Jednotné ovládací prvky -->
         <div class="btn-group">
             <button id="add-btn" class="primary">➕ New</button>
+            <!-- PŘIDANÉ TLAČÍTKO BACK -->
+            <button id="undo-btn" title="Undo last edit">↩️ Undo</button>
             <button id="prev-btn">◀</button>
             <span id="active-badge" class="active-badge">#1 out of 1</span>
             <button id="next-btn">▶</button>
@@ -137,12 +137,85 @@
         let map, source, drawInteraction, modifyInteraction, selectInteraction;
         let polygons = []; 
         let lines = [];    
+        let isInitialized = false;
         
-        let activeTool = 'polygon'; // 'polygon' nebo 'line'
+        // HISTORIE PRO UNDO
+        let historyStack = [];
+        const MAX_HISTORY = 30;
+
+        let activeTool = 'polygon';
         let activePolygonIndex = 0;
         let activeLineIndex = 0;
         let polyViewMode = 'all';  
         let lineViewMode = 'all';  
+
+        // Uložení aktuálního stavu do historie
+        function pushHistoryState() {
+            const polyCoords = polygons.map(f => f.getGeometry().getCoordinates());
+            const lineCoords = lines.map(f => f.getGeometry().getCoordinates());
+
+            const state = {
+                polygons: JSON.parse(JSON.stringify(polyCoords)),
+                lines: JSON.parse(JSON.stringify(lineCoords)),
+                activeTool: activeTool,
+                activePolygonIndex: activePolygonIndex,
+                activeLineIndex: activeLineIndex
+            };
+
+            historyStack.push(state);
+            if (historyStack.length > MAX_HISTORY) {
+                historyStack.shift();
+            }
+            updateUndoButtonState();
+        }
+
+        function updateUndoButtonState() {
+            const undoBtn = document.getElementById('undo-btn');
+            if (undoBtn) {
+                undoBtn.disabled = historyStack.length === 0;
+            }
+        }
+
+        function undoLastAction() {
+            if (historyStack.length === 0) return;
+
+            const previousState = historyStack.pop();
+
+            // Vyčistíme staré prvky ze zdroje
+            source.clear();
+            polygons = [];
+            lines = [];
+
+            // Obnovíme polygony
+            previousState.polygons.forEach((coords, idx) => {
+                const feat = new ol.Feature({
+                    geometry: new ol.geom.Polygon(coords)
+                });
+                feat.set('type', 'polygon');
+                feat.set('index', idx);
+                polygons.push(feat);
+                source.addFeature(feat);
+            });
+
+            // Obnovíme čáry
+            previousState.lines.forEach((coords, idx) => {
+                const feat = new ol.Feature({
+                    geometry: new ol.geom.LineString(coords)
+                });
+                feat.set('type', 'line');
+                feat.set('index', idx);
+                lines.push(feat);
+                source.addFeature(feat);
+            });
+
+            activeTool = previousState.activeTool;
+            activePolygonIndex = Math.min(previousState.activePolygonIndex, Math.max(0, polygons.length - 1));
+            activeLineIndex = Math.min(previousState.activeLineIndex, Math.max(0, lines.length - 1));
+
+            updateUIControls();
+            updateUndoButtonState();
+            sendDataToStreamlit();
+        }
 
         function sendDataToStreamlit() {
             let polyData = polygons.map(f => {
@@ -170,9 +243,7 @@
             });
         }
 
-
         function updateUIControls() {
-            // Přepínač typu (Polygon vs Line)
             document.getElementById('tool-poly-btn').classList.toggle('active', activeTool === 'polygon');
             document.getElementById('tool-line-btn').classList.toggle('active', activeTool === 'line');
 
@@ -196,7 +267,6 @@
                 document.getElementById('view-single-btn').classList.toggle('active', lineViewMode === 'single');
             }
 
-            // --- PŘIDANÝ KÓD: Aktualizace výberu v selectInteraction ---
             if (selectInteraction) {
                 const selFeatures = selectInteraction.getFeatures();
                 selFeatures.clear();
@@ -274,7 +344,6 @@
             }
         }
 
-
         function setupInteractions() {
             if (drawInteraction) map.removeInteraction(drawInteraction);
             if (modifyInteraction) map.removeInteraction(modifyInteraction);
@@ -314,16 +383,20 @@
             map.addInteraction(selectInteraction);
 
             modifyInteraction = new ol.interaction.Modify({
-                features: selectInteraction.getFeatures(),
+                source: source,
                 deleteCondition: function(event) {
                     return ol.events.condition.singleClick(event) && ol.events.condition.shiftKeyOnly(event);
                 }
             });
 
+            // Uložit stav před začátkem úpravy bodu/bodu smazání
+            modifyInteraction.on('modifystart', function() {
+                pushHistoryState();
+            });
+
             modifyInteraction.on('modifyend', sendDataToStreamlit);
             map.addInteraction(modifyInteraction);
         }
-
 
         function startDrawing() {
             if (drawInteraction) map.removeInteraction(drawInteraction);
@@ -332,6 +405,11 @@
                 source: source,
                 type: activeTool === 'polygon' ? 'Polygon' : 'LineString',
                 maxPoints: activeTool === 'line' ? 2 : undefined
+            });
+
+            drawInteraction.on('drawstart', function() {
+                // Uložit stav před začátkem kreslení
+                pushHistoryState();
             });
 
             drawInteraction.on('drawend', function(evt) {
@@ -352,7 +430,7 @@
 
                 setTimeout(() => {
                     map.removeInteraction(drawInteraction);
-                    updateUIControls(); // Tento krok vloží nově nakreslený prvek do vybraných prvků
+                    updateUIControls();
                     sendDataToStreamlit();
                 }, 50);
             });
@@ -360,95 +438,94 @@
             map.addInteraction(drawInteraction);
         }
 
-        function loadMap(imageDataUrl, width, height, maxHeight, initialPolygons, initialLines, defaultPolyView, defaultLineView, defaultTool) {
+        function initOrUpdateMap(imageDataUrl, width, height, maxHeight, initialPolygons, initialLines, defaultPolyView, defaultLineView, defaultTool) {
             const mapElement = document.getElementById('map');
             const limitHeight = maxHeight || 550;
             const canvasHeight = Math.min(height, limitHeight);
             mapElement.style.height = canvasHeight + 'px';
-            
             setFrameHeight(canvasHeight + 55);
 
             polyViewMode = defaultPolyView || 'all';
             lineViewMode = defaultLineView || 'all';
             if (defaultTool) activeTool = defaultTool;
 
-            if (map) {
-                map.setTarget(null);
-                map = null;
-            }
+            if (!isInitialized) {
+                const extent = [0, 0, width, height];
+                const projection = new ol.proj.Projection({
+                    code: 'image',
+                    units: 'pixels',
+                    extent: extent,
+                });
 
-            polygons = [];
-            lines = [];
+                source = new ol.source.Vector();
 
-            const extent = [0, 0, width, height];
-            const projection = new ol.proj.Projection({
-                code: 'image',
-                units: 'pixels',
-                extent: extent,
-            });
+                const vector = new ol.layer.Vector({
+                    source: source,
+                    style: getFeatureStyle
+                });
 
-            source = new ol.source.Vector();
-
-            const vector = new ol.layer.Vector({
-                source: source,
-                style: getFeatureStyle
-            });
-
-            map = new ol.Map({
-                target: 'map',
-                layers: [
-                    new ol.layer.Image({
-                        source: new ol.source.ImageStatic({
-                            url: imageDataUrl,
-                            projection: projection,
-                            imageExtent: extent,
+                map = new ol.Map({
+                    target: 'map',
+                    layers: [
+                        new ol.layer.Image({
+                            source: new ol.source.ImageStatic({
+                                url: imageDataUrl,
+                                projection: projection,
+                                imageExtent: extent,
+                            }),
                         }),
+                        vector
+                    ],
+                    view: new ol.View({
+                        projection: projection,
+                        center: ol.extent.getCenter(extent),
                     }),
-                    vector
-                ],
-                view: new ol.View({
-                    projection: projection,
-                    center: ol.extent.getCenter(extent),
-                }),
-            });
-
-            setTimeout(() => {
-                map.updateSize();
-                map.getView().fit(extent, { size: map.getSize() });
-            }, 100);
-
-            if (initialPolygons && Array.isArray(initialPolygons)) {
-                initialPolygons.forEach((polyCoords, idx) => {
-                    if (polyCoords.length >= 3) {
-                        const closedCoords = [...polyCoords, polyCoords[0]];
-                        const feat = new ol.Feature({
-                            geometry: new ol.geom.Polygon([closedCoords])
-                        });
-                        feat.set('type', 'polygon');
-                        feat.set('index', idx);
-                        polygons.push(feat);
-                        source.addFeature(feat);
-                    }
                 });
-            }
 
-            if (initialLines && Array.isArray(initialLines)) {
-                initialLines.forEach((lineCoords, idx) => {
-                    if (lineCoords.length >= 2) {
-                        const feat = new ol.Feature({
-                            geometry: new ol.geom.LineString(lineCoords)
-                        });
-                        feat.set('type', 'line');
-                        feat.set('index', idx);
-                        lines.push(feat);
-                        source.addFeature(feat);
-                    }
-                });
-            }
+                setTimeout(() => {
+                    map.updateSize();
+                    map.getView().fit(extent, { size: map.getSize() });
+                }, 100);
 
-            setupInteractions();
-            updateUIControls();
-            sendDataToStreamlit();
+                polygons = [];
+                lines = [];
+
+                if (initialPolygons && Array.isArray(initialPolygons)) {
+                    initialPolygons.forEach((polyCoords, idx) => {
+                        if (polyCoords.length >= 3) {
+                            const closedCoords = [...polyCoords, polyCoords[0]];
+                            const feat = new ol.Feature({
+                                geometry: new ol.geom.Polygon([closedCoords])
+                            });
+                            feat.set('type', 'polygon');
+                            feat.set('index', idx);
+                            polygons.push(feat);
+                            source.addFeature(feat);
+                        }
+                    });
+                }
+
+                if (initialLines && Array.isArray(initialLines)) {
+                    initialLines.forEach((lineCoords, idx) => {
+                        if (lineCoords.length >= 2) {
+                            const feat = new ol.Feature({
+                                geometry: new ol.geom.LineString(lineCoords)
+                            });
+                            feat.set('type', 'line');
+                            feat.set('index', idx);
+                            lines.push(feat);
+                            source.addFeature(feat);
+                        }
+                    });
+                }
+
+                setupInteractions();
+                updateUIControls();
+                updateUndoButtonState();
+                isInitialized = true;
+            } else {
+                updateUIControls();
+            }
         }
 
         // Tlačítka pro přepínání nástroje
@@ -464,7 +541,10 @@
             sendDataToStreamlit();
         });
 
-        // Akční tlačítka (Společná pro oba typy)
+        // Tlačítko Back / Undo
+        document.getElementById('undo-btn').addEventListener('click', () => undoLastAction());
+
+        // Akční tlačítka
         document.getElementById('add-btn').addEventListener('click', () => startDrawing());
 
         document.getElementById('prev-btn').addEventListener('click', () => {
@@ -498,6 +578,7 @@
         document.getElementById('del-btn').addEventListener('click', () => {
             if (activeTool === 'polygon') {
                 if (polygons.length > 0 && activePolygonIndex < polygons.length) {
+                    pushHistoryState(); // Uložit stav před smazáním
                     const removed = polygons.splice(activePolygonIndex, 1)[0];
                     source.removeFeature(removed);
                     polygons.forEach((f, idx) => f.set('index', idx));
@@ -505,6 +586,7 @@
                 }
             } else {
                 if (lines.length > 0 && activeLineIndex < lines.length) {
+                    pushHistoryState(); // Uložit stav před smazáním
                     const removed = lines.splice(activeLineIndex, 1)[0];
                     source.removeFeature(removed);
                     lines.forEach((f, idx) => f.set('index', idx));
@@ -532,7 +614,7 @@
         window.addEventListener("message", function(event) {
             if (event.data.type === "streamlit:render") {
                 const args = event.data.args;
-                loadMap(
+                initOrUpdateMap(
                     args.image_data_url,
                     args.width,
                     args.height,
