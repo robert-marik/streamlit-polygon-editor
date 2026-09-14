@@ -20,21 +20,31 @@ def length_of_line(line):
 
 
 @st.cache_data(show_spinner=False)
-def _prepare_image_payload(image: Image.Image) -> tuple[str, str]:
+def _prepare_image_payload(_image: Image.Image, _cache_key: str) -> tuple[str, str]:
     """PNG/base64-encode the image and hash it, cached by image content.
 
     Streamlit re-runs the whole script on every interaction, which
     previously re-encoded the (potentially large) image to PNG/base64 every
-    single time even though it rarely changes. Caching this by the image's
-    content (Streamlit hashes PIL Images by their pixel data) avoids that
+    single time even though it rarely changes. Caching this avoids that
     repeated work.
+
+    Streamlit's own cache hasher cannot hash a PIL Image (it raises
+    UnhashableParamError), so the image itself is passed as `_image` - the
+    leading underscore tells Streamlit not to hash it - and a cheap,
+    already-hashable fingerprint (`_cache_key`, computed by the caller from
+    the raw pixel bytes) is used as the actual cache key instead.
     """
     buffered = io.BytesIO()
-    image.save(buffered, format="PNG")
+    _image.save(buffered, format="PNG")
     raw = buffered.getvalue()
     image_data_url = f"data:image/png;base64,{base64.b64encode(raw).decode()}"
     image_token = hashlib.sha256(raw).hexdigest()
     return image_data_url, image_token
+
+
+def _image_cache_key(image: Image.Image) -> str:
+    """Cheap, hashable fingerprint of an image's content (no PNG compression)."""
+    return f"{image.size}:{image.mode}:{hashlib.sha256(image.tobytes()).hexdigest()}"
 
 
 def custom_polygon_editor(
@@ -57,7 +67,7 @@ def custom_polygon_editor(
             odešlou až po kliknutí na tlačítko "✅ Confirm" na liště nástrojů.
     """
     width, height = bg_image.size
-    image_data_url, image_token = _prepare_image_payload(bg_image)
+    image_data_url, image_token = _prepare_image_payload(bg_image, _image_cache_key(bg_image))
 
     default_polygons = initial_polygons if initial_polygons is not None else []
     default_lines = initial_lines if initial_lines is not None else []
