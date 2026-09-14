@@ -1,6 +1,7 @@
 import io
 import base64
 import os
+import hashlib
 import streamlit as st
 import streamlit.components.v1 as components
 from PIL import Image
@@ -17,6 +18,25 @@ def length_of_line(line):
         total_length += ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
     return total_length
 
+
+@st.cache_data(show_spinner=False)
+def _prepare_image_payload(image: Image.Image) -> tuple[str, str]:
+    """PNG/base64-encode the image and hash it, cached by image content.
+
+    Streamlit re-runs the whole script on every interaction, which
+    previously re-encoded the (potentially large) image to PNG/base64 every
+    single time even though it rarely changes. Caching this by the image's
+    content (Streamlit hashes PIL Images by their pixel data) avoids that
+    repeated work.
+    """
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    raw = buffered.getvalue()
+    image_data_url = f"data:image/png;base64,{base64.b64encode(raw).decode()}"
+    image_token = hashlib.sha256(raw).hexdigest()
+    return image_data_url, image_token
+
+
 def custom_polygon_editor(
     bg_image: Image.Image,
     initial_polygons: list[list[list[float]]] = None,
@@ -25,14 +45,19 @@ def custom_polygon_editor(
     poly_view_mode: str = "all",
     line_view_mode: str = "all",
     max_height: int = 550, 
-    key: str = "polygon_editor"
+    key: str = "polygon_editor",
+    confirm_mode: bool = False,
 ):
+    """
+    confirm_mode:
+        False (výchozí) - každá úprava (kreslení, přesun bodu, smazání,
+            přepnutí nástroje/pohledu, undo, ...) se ihned pošle do Pythonu
+            a vyvolá rerun skriptu.
+        True - úpravy se hromadí jen lokálně v prohlížeči. Do Pythonu se
+            odešlou až po kliknutí na tlačítko "✅ Confirm" na liště nástrojů.
+    """
     width, height = bg_image.size
-
-    buffered = io.BytesIO()
-    bg_image.save(buffered, format="PNG")
-    img_str = base64.b64encode(buffered.getvalue()).decode()
-    image_data_url = f"data:image/png;base64,{img_str}"
+    image_data_url, image_token = _prepare_image_payload(bg_image)
 
     default_polygons = initial_polygons if initial_polygons is not None else []
     default_lines = initial_lines if initial_lines is not None else []
@@ -44,7 +69,8 @@ def custom_polygon_editor(
         "poly_view_mode": poly_view_mode,
         "line_view_mode": line_view_mode,
         "polygons": default_polygons,
-        "lines": default_lines
+        "lines": default_lines,
+        "image_token": image_token,
     }
 
     component_value = _polygon_editor_func(
@@ -57,11 +83,21 @@ def custom_polygon_editor(
         active_tool=active_tool,
         poly_view_mode=poly_view_mode,
         line_view_mode=line_view_mode,
+        image_token=image_token,
+        confirm_mode=confirm_mode,
         key=key,
         default=default_val
     )
 
-    return component_value if isinstance(component_value, dict) else default_val
+    if not isinstance(component_value, dict):
+        return default_val
+    # If the frontend is still holding data from a previous (different)
+    # image - e.g. right after bg_image was swapped, before the iframe has
+    # caught up - discard it instead of handing back geometry drawn on a
+    # different picture.
+    if component_value.get("image_token") != image_token:
+        return default_val
+    return component_value
 
 
 if __name__ == "__main__":
@@ -95,6 +131,14 @@ if __name__ == "__main__":
         ]
     ]
 
+    confirm_mode = st.sidebar.checkbox(
+        "Potvrzovací režim",
+        value=False,
+        help="Když je zapnuto, úpravy se do Pythonu odešlou až po kliknutí "
+             "na tlačítko '✅ Confirm' na liště editoru, místo okamžitě "
+             "po každé jednotlivé úpravě.",
+    )
+
     c1, c2 = st.columns([5, 2])
     with c1:
         st.subheader("Canvas")
@@ -104,7 +148,8 @@ if __name__ == "__main__":
                 initial_polygons=default_polygons,
                 initial_lines=default_lines,
                 key=f"editor_{img_name}", 
-                max_height=600
+                max_height=600,
+                confirm_mode=confirm_mode,
             )
 
     with c2:
