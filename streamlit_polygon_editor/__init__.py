@@ -20,7 +20,7 @@ def length_of_line(line):
 
 
 @st.cache_data(show_spinner=False)
-def _prepare_image_payload(_image: Image.Image, _cache_key: str) -> tuple[str, str]:
+def _prepare_image_payload(_image: Image.Image, cache_key: str) -> tuple[str, str]:
     """PNG/base64-encode the image and hash it, cached by image content.
 
     Streamlit re-runs the whole script on every interaction, which
@@ -67,7 +67,7 @@ def custom_polygon_editor(
             odešlou až po kliknutí na tlačítko "✅ Confirm" na liště nástrojů.
     """
     width, height = bg_image.size
-    image_data_url, image_token = _prepare_image_payload(bg_image, _image_cache_key(bg_image))
+    image_data_url, image_token = _prepare_image_payload(bg_image, cache_key=_image_cache_key(bg_image))
 
     default_polygons = initial_polygons if initial_polygons is not None else []
     default_lines = initial_lines if initial_lines is not None else []
