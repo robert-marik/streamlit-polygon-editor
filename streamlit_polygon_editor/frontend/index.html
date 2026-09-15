@@ -51,6 +51,9 @@
         button.primary { background-color: #0d6efd; color: white; border-color: #0d6efd; }
         button.primary:hover { background-color: #0b5ed7; }
         button.danger { background-color: #dc3545; color: white; border-color: #dc3545; }
+        button.success { background-color: #198754; color: white; border-color: #198754; }
+        button.success:hover { background-color: #157347; }
+        button.success:disabled { background-color: #9e9e9e; border-color: #9e9e9e; opacity: 0.6; }
         button.danger:hover { background-color: #bb2d3b; }
         
         .toggle-switch {
@@ -85,6 +88,7 @@
             text-align: center;
         }
         .info { font-size: 11px; color: #868e96; margin-left: auto; }
+        #unsaved-indicator { font-size: 12px; color: #b8860b; font-weight: 600; }
         #map { width: 100%; height: 550px; }
     </style>
 </head>
@@ -114,6 +118,11 @@
             </div>
         </div>
 
+                <div class="btn-group">
+            <button id="confirm-btn" class="success" hidden>✅ Confirm</button>
+            <span id="unsaved-indicator" hidden>● Unsaved changes</span>
+        </div>
+
         <span class="info">(Shift + Click on point = delete point)</span>
     </div>
     <div id="map"></div>
@@ -138,6 +147,9 @@
         let polygons = []; 
         let lines = [];    
         let isInitialized = false;
+        let imageToken;
+        let confirmMode = false;
+        let dirty = false;
         
         // HISTORIE PRO UNDO
         let historyStack = [];
@@ -214,7 +226,7 @@
 
             updateUIControls();
             updateUndoButtonState();
-            sendDataToStreamlit();
+            commitChange();
         }
 
         function sendDataToStreamlit() {
@@ -222,14 +234,17 @@
                 const geom = f.getGeometry();
                 if (!geom) return [];
                 const rawCoords = geom.getCoordinates()[0] || [];
-                return rawCoords.slice(0, -1).map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
+                // Neafinujeme na celé px: zaokrouhlení může u husto vedle
+                // sebe ležících vrcholů způsobit jejich splynutí a vytvořit
+                // samo-protínající se polygon.
+                return rawCoords.slice(0, -1).map(pt => [pt[0], pt[1]]);
             });
 
             let lineData = lines.map(f => {
                 const geom = f.getGeometry();
                 if (!geom) return [];
                 const rawCoords = geom.getCoordinates() || [];
-                return rawCoords.map(pt => [Math.round(pt[0]), Math.round(pt[1])]);
+                return rawCoords.map(pt => [pt[0], pt[1]]);
             });
 
             setComponentValue({
@@ -239,8 +254,30 @@
                 poly_view_mode: polyViewMode,
                 line_view_mode: lineViewMode,
                 polygons: polyData,
-                lines: lineData
+                lines: lineData,
+                image_token: imageToken
             });
+        }
+
+        // In "confirm" mode, edits only accumulate locally in the browser;
+        // they are sent to Python once the user clicks the Confirm button.
+        // In the default (immediate) mode every edit is sent right away.
+        function refreshConfirmUI() {
+            const btn = document.getElementById('confirm-btn');
+            const indicator = document.getElementById('unsaved-indicator');
+            btn.hidden = !confirmMode;
+            indicator.hidden = !confirmMode;
+            btn.disabled = !dirty;
+            indicator.style.visibility = dirty ? 'visible' : 'hidden';
+        }
+
+        function commitChange() {
+            if (confirmMode) {
+                dirty = true;
+                refreshConfirmUI();
+            } else {
+                sendDataToStreamlit();
+            }
         }
 
         function updateUIControls() {
@@ -284,6 +321,71 @@
             if (source) source.changed();
         }
 
+        // Style objects are stateless once created for a given
+        // (type, isActive) combination - OpenLayers calls the geometry
+        // function fresh per-feature/per-render anyway, so it's safe (and
+        // much cheaper) to build each variant once and reuse it, instead of
+        // allocating a new Style/Fill/Stroke/Circle tree for every single
+        // feature on every redraw (which happens continuously while
+        // dragging a vertex).
+        const STYLE_CACHE = {};
+
+        function polygonVertexGeometry(f) {
+            const geom = f.getGeometry();
+            const coords = geom.getCoordinates()[0] || [];
+            return new ol.geom.MultiPoint(coords.slice(0, -1));
+        }
+
+        function lineVertexGeometry(f) {
+            return new ol.geom.MultiPoint(f.getGeometry().getCoordinates());
+        }
+
+        function buildStyle(kind, isActive) {
+            if (kind === 'polygon') {
+                return [
+                    new ol.style.Style({
+                        fill: new ol.style.Fill({
+                            color: isActive ? 'rgba(13, 110, 253, 0.25)' : 'rgba(108, 117, 125, 0.15)'
+                        }),
+                        stroke: new ol.style.Stroke({
+                            color: isActive ? '#0d6efd' : '#6c757d',
+                            width: isActive ? 3 : 2
+                        }),
+                    }),
+                    new ol.style.Style({
+                        image: new ol.style.Circle({
+                            radius: isActive ? 6 : 4,
+                            fill: new ol.style.Fill({ color: isActive ? '#0d6efd' : '#ffffff' }),
+                            stroke: new ol.style.Stroke({ color: isActive ? '#ffffff' : '#0d6efd', width: 2 }),
+                        }),
+                        geometry: polygonVertexGeometry
+                    })
+                ];
+            }
+            return [
+                new ol.style.Style({
+                    stroke: new ol.style.Stroke({
+                        color: isActive ? '#198754' : '#20c997',
+                        width: isActive ? 4 : 2.5
+                    })
+                }),
+                new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: isActive ? 6 : 4,
+                        fill: new ol.style.Fill({ color: isActive ? '#198754' : '#ffffff' }),
+                        stroke: new ol.style.Stroke({ color: isActive ? '#ffffff' : '#198754', width: 2 }),
+                    }),
+                    geometry: lineVertexGeometry
+                })
+            ];
+        }
+
+        function getCachedStyle(kind, isActive) {
+            const key = kind + ':' + isActive;
+            if (!STYLE_CACHE[key]) STYLE_CACHE[key] = buildStyle(kind, isActive);
+            return STYLE_CACHE[key];
+        }
+
         function getFeatureStyle(feature) {
             const type = feature.get('type');
             const index = feature.get('index');
@@ -293,29 +395,7 @@
                     return null; 
                 }
                 const isActive = (activeTool === 'polygon' && index === activePolygonIndex);
-                return [
-                    new ol.style.Style({
-                        fill: new ol.style.Fill({ 
-                            color: isActive ? 'rgba(13, 110, 253, 0.25)' : 'rgba(108, 117, 125, 0.15)' 
-                        }),
-                        stroke: new ol.style.Stroke({ 
-                            color: isActive ? '#0d6efd' : '#6c757d', 
-                            width: isActive ? 3 : 2 
-                        }),
-                    }),
-                    new ol.style.Style({
-                        image: new ol.style.Circle({
-                            radius: isActive ? 6 : 4,
-                            fill: new ol.style.Fill({ color: isActive ? '#0d6efd' : '#ffffff' }),
-                            stroke: new ol.style.Stroke({ color: isActive ? '#ffffff' : '#0d6efd', width: 2 }),
-                        }),
-                        geometry: function(f) {
-                            const geom = f.getGeometry();
-                            const coords = geom.getCoordinates()[0] || [];
-                            return new ol.geom.MultiPoint(coords.slice(0, -1));
-                        }
-                    })
-                ];
+                return getCachedStyle('polygon', isActive);
             }
 
             if (type === 'line') {
@@ -323,24 +403,7 @@
                     return null; 
                 }
                 const isActive = (activeTool === 'line' && index === activeLineIndex);
-                return [
-                    new ol.style.Style({
-                        stroke: new ol.style.Stroke({ 
-                            color: isActive ? '#198754' : '#20c997', 
-                            width: isActive ? 4 : 2.5 
-                        })
-                    }),
-                    new ol.style.Style({
-                        image: new ol.style.Circle({
-                            radius: isActive ? 6 : 4,
-                            fill: new ol.style.Fill({ color: isActive ? '#198754' : '#ffffff' }),
-                            stroke: new ol.style.Stroke({ color: isActive ? '#ffffff' : '#198754', width: 2 }),
-                        }),
-                        geometry: function(f) {
-                            return new ol.geom.MultiPoint(f.getGeometry().getCoordinates());
-                        }
-                    })
-                ];
+                return getCachedStyle('line', isActive);
             }
         }
 
@@ -380,7 +443,7 @@
                         activeLineIndex = idx;
                     }
                     updateUIControls();
-                    sendDataToStreamlit();
+                    commitChange();
                 }
             });
 
@@ -397,7 +460,7 @@
                 pushHistoryState();
             });
 
-            modifyInteraction.on('modifyend', sendDataToStreamlit);
+            modifyInteraction.on('modifyend', commitChange);
             map.addInteraction(modifyInteraction);
         }
 
@@ -434,114 +497,140 @@
                 setTimeout(() => {
                     map.removeInteraction(drawInteraction);
                     updateUIControls();
-                    sendDataToStreamlit();
+                    commitChange();
                 }, 50);
             });
 
             map.addInteraction(drawInteraction);
         }
 
-        function initOrUpdateMap(imageDataUrl, width, height, maxHeight, initialPolygons, initialLines, defaultPolyView, defaultLineView, defaultTool) {
+        function resetSceneForImage(imageDataUrl, width, height, maxHeight, initialPolygons, initialLines, defaultPolyView, defaultLineView, defaultTool) {
             const mapElement = document.getElementById('map');
             const limitHeight = maxHeight || 550;
             const canvasHeight = Math.min(height, limitHeight);
             mapElement.style.height = canvasHeight + 'px';
             setFrameHeight(canvasHeight + 55);
 
+            // Tear down any previous map instance (e.g. a different image
+            // was passed in) before rebuilding from scratch.
+            if (map) {
+                map.setTarget(null);
+                map = null;
+            }
+
             polyViewMode = defaultPolyView || 'all';
             lineViewMode = defaultLineView || 'all';
-            if (defaultTool) activeTool = defaultTool;
+            activeTool = defaultTool || 'polygon';
+            activePolygonIndex = 0;
+            activeLineIndex = 0;
+            historyStack = [];
+            dirty = false;
 
-            if (!isInitialized) {
-                const extent = [0, 0, width, height];
-                const projection = new ol.proj.Projection({
-                    code: 'image',
-                    units: 'pixels',
-                    extent: extent,
-                });
+            const extent = [0, 0, width, height];
+            const projection = new ol.proj.Projection({
+                code: 'image',
+                units: 'pixels',
+                extent: extent,
+            });
 
-                source = new ol.source.Vector();
+            source = new ol.source.Vector();
 
-                const vector = new ol.layer.Vector({
-                    source: source,
-                    style: getFeatureStyle
-                });
+            const vector = new ol.layer.Vector({
+                source: source,
+                style: getFeatureStyle
+            });
 
-                map = new ol.Map({
-                    target: 'map',
-                    layers: [
-                        new ol.layer.Image({
-                            source: new ol.source.ImageStatic({
-                                url: imageDataUrl,
-                                projection: projection,
-                                imageExtent: extent,
-                            }),
+            map = new ol.Map({
+                target: 'map',
+                layers: [
+                    new ol.layer.Image({
+                        source: new ol.source.ImageStatic({
+                            url: imageDataUrl,
+                            projection: projection,
+                            imageExtent: extent,
                         }),
-                        vector
-                    ],
-                    view: new ol.View({
-                        projection: projection,
-                        center: ol.extent.getCenter(extent),
                     }),
+                    vector
+                ],
+                view: new ol.View({
+                    projection: projection,
+                    center: ol.extent.getCenter(extent),
+                }),
+            });
+
+            setTimeout(() => {
+                map.updateSize();
+                map.getView().fit(extent, { size: map.getSize() });
+            }, 100);
+
+            polygons = [];
+            lines = [];
+
+            if (initialPolygons && Array.isArray(initialPolygons)) {
+                initialPolygons.forEach((polyCoords, idx) => {
+                    if (polyCoords.length >= 3) {
+                        const closedCoords = [...polyCoords, polyCoords[0]];
+                        const feat = new ol.Feature({
+                            geometry: new ol.geom.Polygon([closedCoords])
+                        });
+                        feat.set('type', 'polygon');
+                        feat.set('index', idx);
+                        polygons.push(feat);
+                        source.addFeature(feat);
+                    }
                 });
-
-                setTimeout(() => {
-                    map.updateSize();
-                    map.getView().fit(extent, { size: map.getSize() });
-                }, 100);
-
-                polygons = [];
-                lines = [];
-
-                if (initialPolygons && Array.isArray(initialPolygons)) {
-                    initialPolygons.forEach((polyCoords, idx) => {
-                        if (polyCoords.length >= 3) {
-                            const closedCoords = [...polyCoords, polyCoords[0]];
-                            const feat = new ol.Feature({
-                                geometry: new ol.geom.Polygon([closedCoords])
-                            });
-                            feat.set('type', 'polygon');
-                            feat.set('index', idx);
-                            polygons.push(feat);
-                            source.addFeature(feat);
-                        }
-                    });
-                }
-
-                if (initialLines && Array.isArray(initialLines)) {
-                    initialLines.forEach((lineCoords, idx) => {
-                        if (lineCoords.length >= 2) {
-                            const feat = new ol.Feature({
-                                geometry: new ol.geom.LineString(lineCoords)
-                            });
-                            feat.set('type', 'line');
-                            feat.set('index', idx);
-                            lines.push(feat);
-                            source.addFeature(feat);
-                        }
-                    });
-                }
-
-                setupInteractions();
-                updateUIControls();
-                updateUndoButtonState();
-                isInitialized = true;
-            } else {
-                updateUIControls();
             }
+
+            if (initialLines && Array.isArray(initialLines)) {
+                initialLines.forEach((lineCoords, idx) => {
+                    if (lineCoords.length >= 2) {
+                        const feat = new ol.Feature({
+                            geometry: new ol.geom.LineString(lineCoords)
+                        });
+                        feat.set('type', 'line');
+                        feat.set('index', idx);
+                        lines.push(feat);
+                        source.addFeature(feat);
+                    }
+                });
+            }
+
+            setupInteractions();
+            updateUIControls();
+            updateUndoButtonState();
+            refreshConfirmUI();
+            isInitialized = true;
+        }
+
+        // Same image, just another Streamlit rerun (possibly triggered by
+        // this very component). We must NOT reapply poly_view_mode /
+        // line_view_mode / active_tool / initial_polygons / initial_lines
+        // here: Python's default arguments for those are typically static,
+        // so blindly re-applying them on every render would silently
+        // overwrite whatever the user just clicked in the browser (e.g.
+        // switching to the "Line" tool would immediately get reset back to
+        // "Polygon" on the very next rerun). Only resizing/height and the
+        // confirm-mode flag are safe to re-sync unconditionally.
+        function applyViewSettings(maxHeight, height) {
+            const mapElement = document.getElementById('map');
+            const limitHeight = maxHeight || 550;
+            const canvasHeight = Math.min(height, limitHeight);
+            mapElement.style.height = canvasHeight + 'px';
+            setFrameHeight(canvasHeight + 55);
+            updateUIControls();
         }
 
         // Tlačítka pro přepínání nástroje
         document.getElementById('tool-poly-btn').addEventListener('click', () => {
             activeTool = 'polygon';
             updateUIControls();
-            sendDataToStreamlit();
+            commitChange();
         });
 
         document.getElementById('tool-line-btn').addEventListener('click', () => {
             activeTool = 'line';
             updateUIControls();
-            sendDataToStreamlit();
+            commitChange();
         });
 
         // Tlačítko Back / Undo
@@ -561,7 +650,7 @@
                 }
             }
             updateUIControls();
-            sendDataToStreamlit();
+            commitChange();
         });
 
         document.getElementById('next-btn').addEventListener('click', () => {
@@ -575,7 +664,7 @@
                 }
             }
             updateUIControls();
-            sendDataToStreamlit();
+            commitChange();
         });
 
         document.getElementById('del-btn').addEventListener('click', () => {
@@ -597,37 +686,58 @@
                 }
             }
             updateUIControls();
-            sendDataToStreamlit();
+            commitChange();
         });
 
         document.getElementById('view-all-btn').addEventListener('click', () => {
             if (activeTool === 'polygon') polyViewMode = 'all';
             else lineViewMode = 'all';
             updateUIControls();
-            sendDataToStreamlit();
+            commitChange();
         });
 
         document.getElementById('view-single-btn').addEventListener('click', () => {
             if (activeTool === 'polygon') polyViewMode = 'single';
             else lineViewMode = 'single';
             updateUIControls();
+            commitChange();
+        });
+
+        document.getElementById('confirm-btn').addEventListener('click', () => {
             sendDataToStreamlit();
+            dirty = false;
+            refreshConfirmUI();
         });
 
         window.addEventListener("message", function(event) {
             if (event.data.type === "streamlit:render") {
                 const args = event.data.args;
-                initOrUpdateMap(
-                    args.image_data_url,
-                    args.width,
-                    args.height,
-                    args.max_height,
-                    args.initial_polygons,
-                    args.initial_lines,
-                    args.poly_view_mode,
-                    args.line_view_mode,
-                    args.active_tool
-                );
+                confirmMode = !!args.confirm_mode;
+
+                // Compare the small sha256 token instead of e.g. the full
+                // base64 image data - and use it to decide whether this is
+                // genuinely a new/changed image (full rebuild needed) or
+                // just another rerun of the same image (local edits must be
+                // preserved).
+                const tokenChanged = imageToken !== args.image_token;
+                imageToken = args.image_token;
+
+                if (!isInitialized || tokenChanged) {
+                    resetSceneForImage(
+                        args.image_data_url,
+                        args.width,
+                        args.height,
+                        args.max_height,
+                        args.initial_polygons,
+                        args.initial_lines,
+                        args.poly_view_mode,
+                        args.line_view_mode,
+                        args.active_tool
+                    );
+                } else {
+                    applyViewSettings(args.max_height, args.height);
+                }
+                refreshConfirmUI();
             }
         });
 
