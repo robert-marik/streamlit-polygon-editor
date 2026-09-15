@@ -5,97 +5,182 @@
     <link rel="stylesheet" href="static/ol.css">
     <script src="static/ol.js"></script>
     <style>
-        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: transparent; overflow: hidden; }
-        #toolbar { 
-            padding: 8px 12px;
-            display: flex; 
-            gap: 12px; 
-            align-items: center; 
+        :root {
+            --ink: #171a21;
+            --ink-soft: #6b7280;
+            --line: #e5e7eb;
+            --line-soft: #eef0f3;
+            --surface: #ffffff;
+            --surface-sunken: #f4f5f7;
+            --accent: #4f46e5;
+            --accent-strong: #4338ca;
+            --accent-tint: #eef0fd;
+            --danger: #e11d48;
+            --danger-strong: #be123c;
+            --success: #059669;
+            --success-strong: #047857;
+            --success-flat: #9ca3af;
+            --unsaved: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: transparent;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Pulsující indikátor neuložených změn */
+        #unsaved-bar {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--unsaved);
+            opacity: 0;
+            transform: scaleY(0.6);
+            transform-origin: top;
+            transition: opacity .25s ease, transform .25s ease;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        #unsaved-bar.active {
+            opacity: 1;
+            transform: scaleY(1);
+            animation: unsaved-pulse 1.7s ease-in-out infinite;
+        }
+        @keyframes unsaved-pulse {
+            0%, 100% { box-shadow: 0 0 6px 0 rgba(239,68,68,.45); opacity: .6; }
+            50% { box-shadow: 0 0 14px 2px rgba(239,68,68,.85); opacity: 1; }
+        }
+
+        #toolbar {
+            padding: 10px 16px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
             flex-wrap: wrap;
-            background: #ffffff;
-            border-bottom: 1px solid #e0e0e0;
+            background: var(--surface);
+            border-bottom: 1px solid var(--line);
             box-sizing: border-box;
             font-size: 13px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            color: var(--ink);
         }
+
         .btn-group {
             display: flex;
             align-items: center;
             gap: 6px;
-            background: #f8f9fa;
-            padding: 4px 8px;
-            border-radius: 6px;
-            border: 1px solid #dee2e6;
+            padding: 3px;
+            border-radius: 10px;
         }
+        .btn-group + .btn-group { border-left: 1px solid var(--line-soft); padding-left: 12px; }
+
         .group-label {
             font-weight: 600;
-            font-size: 11px;
-            color: #495057;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-right: 2px;
-        }
-        button {
-            background-color: #ffffff; 
-            color: #212529; 
-            border: 1px solid #ced4da; 
-            padding: 4px 10px; 
-            border-radius: 4px; 
-            cursor: pointer; 
-            font-weight: 500;
             font-size: 12px;
-            transition: all 0.15s ease;
+            color: var(--ink-soft);
+            margin-right: 2px;
+            white-space: nowrap;
         }
-        button:hover { background-color: #e9ecef; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        button.primary { background-color: #0d6efd; color: white; border-color: #0d6efd; }
-        button.primary:hover { background-color: #0b5ed7; }
-        button.danger { background-color: #dc3545; color: white; border-color: #dc3545; }
-        button.success { background-color: #198754; color: white; border-color: #198754; }
-        button.success:hover { background-color: #157347; }
-        button.success:disabled { background-color: #9e9e9e; border-color: #9e9e9e; opacity: 0.6; }
-        button.danger:hover { background-color: #bb2d3b; }
-        
+
+        button {
+            background-color: var(--surface);
+            color: var(--ink);
+            border: 1px solid var(--line);
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 12.5px;
+            line-height: 1.2;
+            transition: background-color .15s ease, border-color .15s ease, color .15s ease, transform .08s ease;
+        }
+        button:hover { background-color: var(--surface-sunken); border-color: #d5d8de; }
+        button:active { transform: scale(0.97); }
+        button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        button:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+        button.primary { background-color: var(--accent); color: #fff; border-color: var(--accent); }
+        button.primary:hover { background-color: var(--accent-strong); border-color: var(--accent-strong); }
+
+        button.danger { background-color: var(--surface); color: var(--danger); border-color: #f3c6ce; }
+        button.danger:hover { background-color: #fdf1f3; border-color: var(--danger); }
+
+        button.success { background-color: var(--success); color: #fff; border-color: var(--success); }
+        button.success:hover { background-color: var(--success-strong); border-color: var(--success-strong); }
+        button.success:disabled { background-color: var(--success-flat); border-color: var(--success-flat); opacity: 0.55; }
+
+        button#prev-btn, button#next-btn {
+            padding: 6px 9px;
+            color: var(--ink-soft);
+        }
+
         .toggle-switch {
             display: flex;
-            border-radius: 4px;
+            border-radius: 8px;
             overflow: hidden;
-            border: 1px solid #ced4da;
-            background: #e9ecef;
+            border: 1px solid var(--line);
+            background: var(--surface-sunken);
         }
         .toggle-btn {
             border: none;
             border-radius: 0;
             background: transparent;
-            padding: 4px 10px;
-            font-size: 12px;
-            color: #495057;
+            padding: 6px 12px;
+            font-size: 12.5px;
+            color: var(--ink-soft);
         }
+        .toggle-btn:hover { background: #eceef1; }
         .toggle-btn.active {
-            background: #0d6efd;
-            color: white;
+            background: var(--accent);
+            color: #fff;
             font-weight: 600;
         }
-        
+        .toggle-btn.active:hover { background: var(--accent-strong); }
+
         .active-badge {
-            font-size: 12px;
-            font-weight: bold;
-            padding: 2px 8px;
-            border-radius: 10px;
-            background: #e7f5ff;
-            color: #1971c2;
-            min-width: 75px;
+            font-size: 12.5px;
+            font-weight: 600;
+            padding: 5px 12px;
+            border-radius: 999px;
+            background: var(--accent-tint);
+            color: var(--accent-strong);
+            min-width: 78px;
             text-align: center;
         }
-        .info { font-size: 11px; color: #868e96; margin-left: auto; }
-        #unsaved-indicator { font-size: 12px; color: #b8860b; font-weight: 600; }
-        #map { width: 100%; height: 550px; }
+
+        .info { font-size: 11.5px; color: var(--ink-soft); margin-left: auto; }
+
+        #unsaved-indicator {
+            font-size: 12.5px;
+            color: var(--danger-strong);
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #unsaved-indicator::before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--unsaved);
+            animation: dot-pulse 1.4s ease-in-out infinite;
+        }
+        @keyframes dot-pulse {
+            0%, 100% { opacity: .5; transform: scale(0.85); }
+            50% { opacity: 1; transform: scale(1); }
+        }
+
+        #map { width: 100%; height: 550px; background: var(--surface-sunken); }
     </style>
 </head>
 <body>
+    <div id="unsaved-bar"></div>
     <div id="toolbar">
         <div class="btn-group">
-            <span class="group-label"></span>
             <div class="toggle-switch">
                 <button id="tool-poly-btn" class="toggle-btn active">🔲 Polygon</button>
                 <button id="tool-line-btn" class="toggle-btn">📏 Line</button>
@@ -104,23 +189,24 @@
 
         <div class="btn-group">
             <button id="add-btn" class="primary">➕ New</button>
-            <!-- PŘIDANÉ TLAČÍTKO BACK -->
             <button id="undo-btn" title="Undo last edit">↩️ Undo</button>
             <button id="prev-btn">◀</button>
             <span id="active-badge" class="active-badge">#1 out of 1</span>
             <button id="next-btn">▶</button>
             <button id="del-btn" class="danger">🗑️ Delete</button>
-            
-            <span class="group-label" style="margin-left: 8px;">Show:</span>
+        </div>
+
+        <div class="btn-group">
+            <span class="group-label">Show:</span>
             <div class="toggle-switch">
                 <button id="view-all-btn" class="toggle-btn active">All</button>
                 <button id="view-single-btn" class="toggle-btn">Selected</button>
             </div>
         </div>
 
-                <div class="btn-group">
+        <div class="btn-group">
             <button id="confirm-btn" class="success" hidden>✅ Confirm</button>
-            <span id="unsaved-indicator" hidden>● Unsaved changes</span>
+            <span id="unsaved-indicator" hidden>Unsaved changes</span>
         </div>
 
         <span class="info">(Shift + Click on point = delete point)</span>
@@ -265,10 +351,12 @@
         function refreshConfirmUI() {
             const btn = document.getElementById('confirm-btn');
             const indicator = document.getElementById('unsaved-indicator');
+            const unsavedBar = document.getElementById('unsaved-bar');
             btn.hidden = !confirmMode;
             indicator.hidden = !confirmMode;
             btn.disabled = !dirty;
             indicator.style.visibility = dirty ? 'visible' : 'hidden';
+            if (unsavedBar) unsavedBar.classList.toggle('active', confirmMode && dirty);
         }
 
         function commitChange() {
